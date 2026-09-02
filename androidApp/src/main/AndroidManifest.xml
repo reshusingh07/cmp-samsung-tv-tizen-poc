@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- required=false on both so the same APK installs on phones/tablets
+         (which have a touchscreen but not leanback) AND Android TV devices
+         (which have leanback but often no touchscreen); see brief
+         requirement 6, "work on both phone/tablet and Android TV". -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="Dummy TV App"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.DummyTvApp"
+        android:allowBackup="false"
+        android:banner="@mipmap/ic_launcher">
+        <!-- android:banner should be a real 320x180 drawable for an actual
+             TV Store listing; it is pointed at the square launcher icon here
+             only as a placeholder so the leanback launcher entry below has
+             *something* to render. See README -> "Known simplifications". -->
+
+        <activity
+            android:name="com.example.dummytvapp.android.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.DummyTvApp"
+            android:screenOrientation="landscape">
+
+            <!-- Regular phone/tablet home-screen launcher entry. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Android TV's home-screen ("leanback") launcher entry. Without
+                 this, the app would install on an Android TV device but never
+                 show up as something you can actually launch from the TV's
+                 home screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

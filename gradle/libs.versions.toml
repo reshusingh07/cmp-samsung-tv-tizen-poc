@@ -1,0 +1,33 @@
+#
+# Version catalog for the DummyTvApp proof-of-concept.
+#
+# Every version below was checked against live, current sources on 2026-08-31
+# (see README.md -> "Verified toolchain versions" for the exact pages consulted).
+# Do not bump these casually -- Kotlin Multiplatform / Android Gradle Plugin /
+# Gradle compatibility is a fairly narrow band, and the combination below is the
+# one JetBrains' own current Compose Multiplatform sample projects use.
+#
+[versions]
+# Latest stable Kotlin (kotlinlang.org/docs/releases.html) as of 2026-08-31.
+kotlin = "2.4.10"
+# Latest stable Compose Multiplatform (github.com/JetBrains/compose-multiplatform/releases).
+compose-multiplatform = "1.12.0"
+# Top of the AGP range that Kotlin 2.4.x fully supports (7.6.3-9.5.0 Gradle /
+# 8.5.2-9.1.0 AGP, per kotlinlang.org/docs/gradle-configure-project.html).
+agp = "9.2.1"
+# Android Studio / Jetpack libraries used only in androidMain.
+androidx-activity = "1.13.0"
+androidx-core = "1.19.0"
+
+[plugins]
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+androidKotlinMultiplatformLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }

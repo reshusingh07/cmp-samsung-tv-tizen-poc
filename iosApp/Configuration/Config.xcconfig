@@ -1,0 +1,6 @@
+// Fill in TEAM_ID with your own Apple Developer Team ID (Xcode > Signing &
+// Capabilities will also let you pick it interactively) before building for
+// a real device. It can stay empty for the iOS Simulator.
+TEAM_ID=
+BUNDLE_ID=com.example.dummytvapp
+APP_NAME=Dummy TV App

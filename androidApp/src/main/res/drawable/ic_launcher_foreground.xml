@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A plain "play" triangle on a transparent background, sized per the
+     adaptive-icon foreground spec (108dp canvas, content kept inside the
+     inner 72dp safe zone so it isn't clipped by launcher icon masks). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,32 L78,54 L40,76 Z" />
+</vector>
