@@ -27,7 +27,8 @@ import com.example.dummytvapp.viewmodel.HomeViewModel
 /**
  * Entry point shared by all four targets:
  * - Android: called from `MainActivity.setContent { App() }`
- * - iOS: called from `ComposeUIViewController { App() }` (see `main.ios.kt`)
+ * - iOS and tvOS: called from `ComposeUIViewController { App() }` (see
+ *   `MainViewController.kt` in `appleMain`)
  * - Web/Wasm: called from `ComposeViewport(document.body!!) { App() }`
  *
  * A dark, TV-style Material 3 theme is used throughout since this is meant

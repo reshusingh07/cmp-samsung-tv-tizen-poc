@@ -20,16 +20,30 @@ kotlin {
         }
     }
 
-    // ---- iOS -----------------------------------------------------------
-    // arm64 (real devices) + simulatorArm64 (Apple Silicon Mac simulator,
+    // ---- Apple: iOS + tvOS -----------------------------------------------
+    // iOS: arm64 (real devices) + simulatorArm64 (Apple Silicon Mac simulator,
     // which is what current Xcode defaults to). Compose Multiplatform 1.11+
     // dropped support for Apple x86_64 targets entirely (see its release
     // notes), so there is no iosX64 here for an Intel Mac simulator either.
+    //
+    // tvOS: the same two shapes (Apple TV hardware + Apple Silicon simulator).
+    // JetBrains does not ship tvOS Compose klibs; they come from the
+    // `dev.sajidali.*` fork via the `dev.sajidali.compose-tvos` settings plugin
+    // applied in settings.gradle.kts, which only publishes tvosArm64 and
+    // tvosSimulatorArm64 (no tvosX64). See docs/CMP_TVOS_GUIDE.md.
+    //
+    // Each target gets a static framework named `shared`; the Xcode projects in
+    // iosApp/ and tvosApp/ link it via `-framework shared`, and Kotlin's
+    // `embedAndSignAppleFrameworkForXcode` task picks the right target from the
+    // SDK Xcode is building for (iphoneos / iphonesimulator / appletvos /
+    // appletvsimulator).
     listOf(
         iosArm64(),
         iosSimulatorArm64(),
-    ).forEach { iosTarget ->
-        iosTarget.binaries.framework {
+        tvosArm64(),
+        tvosSimulatorArm64(),
+    ).forEach { appleTarget ->
+        appleTarget.binaries.framework {
             baseName = "shared"
             isStatic = true
         }
@@ -60,15 +74,23 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api(compose.runtime)
-            api(compose.foundation)
-            api(compose.material3)
-            api(compose.ui)
-            api(compose.components.resources)
+            // Explicit coordinates rather than the Compose Gradle plugin's
+            // `compose.runtime` / `compose.material3` accessors: those are
+            // deprecated in 1.12.0, and the material3 one would pin a version
+            // that has no tvOS klib (see gradle/libs.versions.toml).
+            api(libs.compose.runtime)
+            api(libs.compose.foundation)
+            api(libs.compose.material3)
+            api(libs.compose.ui)
+            api(libs.compose.components.resources)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
         }
+        // iosMain and tvosMain both inherit from appleMain (Kotlin's default
+        // source-set hierarchy), which is where the Swift-facing entry point and
+        // the Apple actuals of the platform/ expect declarations live -- they
+        // are identical for iOS and tvOS, so there is nothing to duplicate.
     }
 }

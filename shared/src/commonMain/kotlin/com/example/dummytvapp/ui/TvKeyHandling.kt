@@ -13,12 +13,19 @@ import com.example.dummytvapp.viewmodel.TvDirection
  *
  * `androidx.compose.ui.input.key.Key`/`KeyEvent`/`onKeyEvent` are common
  * Compose Multiplatform UI APIs -- they are implemented on Android (hardware
- * D-pad / keyboard), iOS (hardware keyboard and, per the Compose
- * Multiplatform 1.11 release notes, the tvOS Siri Remote), and Web/Wasm
- * (browser `KeyboardEvent`s). That is what lets this single function drive
- * every platform's arrow-key/Enter/Back handling with zero platform-specific
- * code -- see README -> "Why not Modifier.focusable()?" for what still does
- * need a platform split (auto-scrolling + the Tizen-specific Back keycode).
+ * D-pad / keyboard), iOS (hardware keyboard), tvOS (the Siri Remote: the
+ * Compose tvOS fork maps its D-pad to `Key.Direction*`, Select to
+ * `Key.DirectionCenter` and Menu to `Key.Back` -- see
+ * docs/CMP_TVOS_GUIDE.md), and Web/Wasm (browser `KeyboardEvent`s). That is
+ * what lets this single function drive every platform's arrow-key/Enter/Back
+ * handling with zero platform-specific code -- see README -> "Why not
+ * Modifier.focusable()?" for what still does need a platform split
+ * (auto-scrolling + the Tizen-specific Back keycode).
+ *
+ * On tvOS the `false` returned by `back()` when nothing is selected matters:
+ * the fork treats an unconsumed Menu press as "let the system handle it", so
+ * Menu on the root screen sends the app to the Apple TV Home screen, exactly
+ * as Apple's HIG expects.
  *
  * @return `true` if the event was handled (so the caller should consume it).
  */

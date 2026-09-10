@@ -6,6 +6,7 @@ Multiplatform (CMP) and run on:
 
 - **Android** (phone/tablet/Android TV)
 - **iOS**
+- **Apple TV (tvOS)**, driven by the Siri Remote
 - **Samsung Smart TV**, via a Kotlin/Wasm web build wrapped as a Tizen Web
   App
 
@@ -17,7 +18,9 @@ is the shared UI + input architecture, not the content.
 > [`docs/CMP_SAMSUNG_TV_GUIDE.md`](docs/CMP_SAMSUNG_TV_GUIDE.md) for a full,
 > beginner-friendly walkthrough of how the Compose Multiplatform code
 > becomes a Samsung TV app, how remote/keyboard navigation works, and how to
-> repeat this setup in your own project.
+> repeat this setup in your own project. For the Apple TV side -- which needs
+> a community fork of Compose, because JetBrains does not publish tvOS
+> artifacts -- read [`docs/CMP_TVOS_GUIDE.md`](docs/CMP_TVOS_GUIDE.md).
 
 ---
 
@@ -31,6 +34,7 @@ is the shared UI + input architecture, not the content.
 - [Getting started](#getting-started)
   - [Android](#android)
   - [iOS](#ios)
+  - [Apple TV (tvOS)](#apple-tv-tvos)
   - [Web / Kotlin-Wasm](#web--kotlin-wasm)
   - [Samsung TV (Tizen)](#samsung-tv-tizen)
 - [TV remote / keyboard navigation](#tv-remote--keyboard-navigation)
@@ -55,6 +59,11 @@ is the shared UI + input architecture, not the content.
 | Android — builds (`./gradlew :androidApp:assembleDebug`) | ✅ **Verified** — produces `androidApp-debug.apk` |
 | Android — runs on a device/emulator | ⬜ Not verified (no device/emulator exercised) |
 | iOS — builds and runs | ⬜ Not verified (no macOS/Xcode available in development) |
+| tvOS — Kotlin framework builds (`./gradlew :shared:linkDebugFrameworkTvosSimulatorArm64`) | ✅ **Verified** |
+| tvOS — Xcode app builds, installs and launches on an Apple TV simulator (`./scripts/run-tvos-simulator.sh`) | ✅ **Verified** — Apple TV 4K (3rd generation), tvOS 26.5 simulator, Xcode 26.5 |
+| tvOS — Siri Remote D-pad + Select drive the shared focus/selection code | ✅ **Verified** on the simulator with scripted keyboard input (arrows, Return) |
+| tvOS — Menu/Back dismisses the selection overlay | ⬜ Not verified by scripted input (the simulator did not turn a scripted Escape keystroke into a Menu press; see [`docs/CMP_TVOS_GUIDE.md`](docs/CMP_TVOS_GUIDE.md#8-verified-vs-not-verified)) |
+| tvOS — real Apple TV hardware | ⬜ Not verified (simulator only) |
 | Web/Wasm — builds (`./gradlew :shared:wasmJsBrowserDistribution`) | ✅ **Verified** |
 | Web/Wasm — runs in a desktop browser | ✅ **Verified in real Chrome**, including full keyboard navigation (see [Documentation](#documentation)) |
 | Tizen packaging, signing, install on a TV | ⬜ Not verified (no Tizen Studio / device / emulator available) |
@@ -99,24 +108,28 @@ for the full sourced explanation.
 ## Architecture
 
 ```
-                    Compose Multiplatform ("shared" module)
-                                  |
-             +--------------------+--------------------+
-             |                    |                     |
-        androidTarget        iosArm64 /            wasmJs (browser)
-             |                iosSimulatorArm64          |
-   +---------+---------+          |             shared/build/dist/wasmJs/
-   |                   |          |             productionExecutable/
-androidApp        (consumed        |             (index.html + shared.js + .wasm)
-(real Android      directly by     |                      |
- application       iosApp's        |                      v
- module)           Xcode project) iosApp              tizen-app/
-   |                   |         (Xcode project,      (config.xml + icon.png,
-   v                   v          Swift shell)         wraps the copied dist)
-Android app         iOS app                                  |
-                                                               v
-                                                         Samsung Smart TV
-                                                    (Tizen 9.0+ / 2025+ models only)
+                       Compose Multiplatform ("shared" module)
+                                       |
+        +------------------+-----------+-----------+--------------------+
+        |                  |                       |                    |
+   androidTarget      iosArm64 /              tvosArm64 /          wasmJs (browser)
+        |             iosSimulatorArm64       tvosSimulatorArm64        |
+        |                  |                       |          shared/build/dist/wasmJs/
+   androidApp         shared.framework        shared.framework  productionExecutable/
+   (real Android      (static, built by       (static, built by (index.html + shared.js + .wasm)
+    application        Xcode's Gradle          Xcode's Gradle           |
+    module)            build phase)            build phase *)           v
+        |                  |                       |              tizen-app/
+        v                  v                       v              (config.xml + icon.png,
+   Android app          iosApp                  tvosApp            wraps the copied dist)
+                    (Xcode project,         (Xcode project,               |
+                     Swift shell)            Swift shell)                 v
+                        |                       |                  Samsung Smart TV
+                        v                       v             (Tizen 9.0+ / 2025+ models only)
+                     iOS app               Apple TV app
+
+   * The tvOS Compose klibs come from the dev.sajidali community fork, wired
+     in by the compose-tvos Gradle settings plugin -- see docs/CMP_TVOS_GUIDE.md.
 ```
 
 For the full explanation of every arrow in this diagram — what Kotlin/Wasm
@@ -150,15 +163,18 @@ the complete story, including the Web/Wasm-specific focus fix.
 
 | Source set | What lives here | Used by |
 |---|---|---|
-| `shared/src/commonMain` | Everything: models, dummy-data generator, all UI (`App`, `HomeScreen`, `ContentRow`, `ContentCard`), the view model, focus state, key-event mapping | Android, iOS, Web — zero UI duplication |
+| `shared/src/commonMain` | Everything: models, dummy-data generator, all UI (`App`, `HomeScreen`, `ContentRow`, `ContentCard`), the view model, focus state, key-event mapping | Android, iOS, tvOS, Web — zero UI duplication |
 | `shared/src/androidMain` | `PlatformBackHandler.android.kt`, `PlatformInputBridge.android.kt`, `PlatformFocusBridge.android.kt` | Android only |
-| `shared/src/iosMain` | `main.ios.kt` (Swift-callable entry point), iOS actuals of the platform files | iOS only |
+| `shared/src/appleMain` | `MainViewController.kt` (Swift-callable entry point), Apple actuals of the platform files | iOS **and** tvOS — Kotlin's default hierarchy makes `appleMain` the parent of both `iosMain` and `tvosMain`, and the files are identical for the two |
 | `shared/src/wasmJsMain` | `main.kt` (`ComposeViewport` entry point), `resources/index.html`, wasmJs actuals of the platform files | Web / Tizen |
 | `androidApp/` | `MainActivity.kt` (one `setContent { App() }` call), manifest, theme, launcher icon | Real, installable Android app module |
 | `iosApp/` | A plain Xcode project (`iosApp.xcodeproj`), `iOSApp.swift`, `ContentView.swift` | Real, installable iOS app; Xcode invokes Gradle itself via a build phase |
+| `tvosApp/` | A plain Xcode project (`tvosApp.xcodeproj`), `tvOSApp.swift`, `ContentView.swift`, tvOS `Info.plist`, App Icon / Top Shelf brand assets | Real, installable Apple TV app; same Gradle-in-a-build-phase pattern as `iosApp` — see `docs/CMP_TVOS_GUIDE.md` |
 | `tizen-app/` | `config.xml` (Tizen's manifest), `icon.png`, plus a copy of the wasmJs build output | Tizen / Samsung TV wrapper — see `tizen-app/README-TIZEN.md` |
 | `scripts/copy-web-dist-to-tizen.sh` | Builds the wasmJs distribution and copies it into `tizen-app/` | Web → Tizen step |
+| `scripts/run-tvos-simulator.sh` | Builds `tvosApp` with `xcodebuild` (which runs Gradle), installs and launches it on an Apple TV simulator | tvOS build-and-run in one command |
 | `docs/CMP_SAMSUNG_TV_GUIDE.md` | Full developer guide to the CMP → Wasm → Tizen → Samsung TV pipeline | Onboarding / reference |
+| `docs/CMP_TVOS_GUIDE.md` | Full developer guide to the CMP → tvOS pipeline: the community fork, how the Gradle settings plugin redirects dependencies, Siri Remote input, density, troubleshooting | Onboarding / reference |
 
 For the "what and why" of every file listed above, see
 [`docs/CMP_SAMSUNG_TV_GUIDE.md`, Section 2](docs/CMP_SAMSUNG_TV_GUIDE.md#2-project-structure).
@@ -171,6 +187,7 @@ For the "what and why" of every file listed above, see
 |---|---|
 | Android | JDK 17, Android SDK (compileSdk 37 / minSdk 24) |
 | iOS | A Mac with Xcode installed |
+| Apple TV (tvOS) | A Mac with Xcode and its tvOS platform installed (Xcode > Settings > Components); network access on the first build, for the tvOS Compose artifacts from Maven Central |
 | Web/Wasm | Nothing beyond the JDK — Gradle downloads Node.js/webpack itself |
 | Samsung TV / Tizen | [Tizen Studio](https://developer.tizen.org/development/tizen-studio/download) + its TV extension, a Samsung developer account for a device-deployable certificate |
 
@@ -203,6 +220,37 @@ open iosApp/iosApp.xcodeproj
 Pick a simulator/device and hit Run. The project's "Run Script" build phase
 automatically runs `./gradlew :shared:embedAndSignAppleFrameworkForXcode`
 for you.
+
+### Apple TV (tvOS)
+
+Requires a Mac with Xcode and the tvOS platform installed.
+
+```bash
+./scripts/run-tvos-simulator.sh
+```
+
+This boots an Apple TV simulator, builds `tvosApp` with `xcodebuild` (whose
+"Compile Kotlin" build phase runs Gradle for the `tvosSimulatorArm64`
+framework), installs the app and launches it. Or open the project in Xcode
+and press Run:
+
+```bash
+open tvosApp/tvosApp.xcodeproj
+```
+
+With the Simulator window focused, the keyboard drives the Siri Remote:
+arrow keys are the D-pad, Return is Select, Escape is Menu (Back).
+
+The Kotlin side needs no tvOS-specific code at all -- but it does need a
+community fork of Compose Multiplatform, because JetBrains does not publish
+tvOS artifacts. `settings.gradle.kts` applies the
+[`dev.sajidali.compose-tvos`](https://github.com/sajidalidev/compose-tvos)
+Gradle settings plugin, which redirects the official Compose coordinates to
+the fork's tvOS builds *for tvOS targets only*; Android, iOS and Web keep
+resolving JetBrains' own artifacts. What that fork is, how the redirect
+works, and what it constrains (Compose 1.12.0 line, Material 3
+`1.12.0-alpha03`) is explained in
+**[`docs/CMP_TVOS_GUIDE.md`](docs/CMP_TVOS_GUIDE.md)**.
 
 ### Web / Kotlin-Wasm
 
@@ -311,8 +359,11 @@ User sees the newly-focused card, scrolled into view
 ```
 
 Every one of those steps is ordinary `commonMain` Kotlin, so it runs
-identically on Android, iOS, and Web/Wasm — nothing above is
-platform-specific.
+identically on Android, iOS, tvOS, and Web/Wasm — nothing above is
+platform-specific. (On tvOS the Compose fork delivers the Siri Remote's
+D-pad as `Key.Direction*`, Select as `Key.DirectionCenter` and Menu as
+`Key.Back`, so the very same `handleKeyEvent` drives it — see
+[`docs/CMP_TVOS_GUIDE.md`, Section 4](docs/CMP_TVOS_GUIDE.md#4-siri-remote-input).)
 
 ### Step by step, with the actual code
 
@@ -500,11 +551,14 @@ actual fun InstallPlatformInputBridge(onBack: () -> Unit) {
 |---|---|
 | Kotlin | 2.4.10 |
 | Compose Multiplatform | 1.12.0 |
-| Gradle (via `./gradlew`) | 9.3.1 |
-| Android Gradle Plugin | 9.1.0 |
+| Compose Material 3 | 1.12.0-alpha03 (versioned separately by JetBrains; pinned explicitly — see `gradle/libs.versions.toml`) |
+| `dev.sajidali.compose-tvos` (tvOS support plugin) | 1.4.2 |
+| Gradle (via `./gradlew`) | 9.4.1 |
+| Android Gradle Plugin | 9.2.1 |
 | Kotlin/Wasm | Beta |
 | Minimum Android version | API 24 (Android 7.0) |
 | Minimum iOS version | iOS 14 |
+| Minimum tvOS version | tvOS 17 |
 | Minimum browser (desktop) | Chrome/Edge 119+, Firefox 120+, Safari 18.2+ |
 | Minimum Samsung TV | 2025 models / Tizen 9.0 |
 
@@ -529,6 +583,7 @@ before trusting these numbers — Kotlin/Wasm is still Beta and could change.
 | Document | Covers |
 |---|---|
 | [`docs/CMP_SAMSUNG_TV_GUIDE.md`](docs/CMP_SAMSUNG_TV_GUIDE.md) | The complete CMP → Kotlin/Wasm → Tizen → Samsung TV pipeline, project structure, Gradle configuration, remote/keyboard navigation internals, focus vs. selection, common problems, and a step-by-step guide to repeating this setup in another CMP project |
+| [`docs/CMP_TVOS_GUIDE.md`](docs/CMP_TVOS_GUIDE.md) | The complete CMP → Apple TV pipeline: why a community fork is needed, how the `dev.sajidali.compose-tvos` settings plugin redirects dependencies for tvOS only, the Xcode project, Siri Remote → Compose key mapping, the 10-foot density rule, version constraints, and troubleshooting |
 | [`tizen-app/README-TIZEN.md`](tizen-app/README-TIZEN.md) | The detailed Tizen packaging/signing/install walkthrough |
 | This file | Project overview, setup, and status |
 
@@ -544,8 +599,9 @@ Deliberate simplifications for this proof of concept — not bugs:
 - **Selecting a card shows a text overlay, not a player/details screen.**
   There is intentionally nowhere further to navigate to — no video
   playback, no details page, no login.
-- **The Android launcher icon and Tizen `icon.png` are simple
-  placeholders**, not real app art.
+- **The Android launcher icon, the tvOS App Icon / Top Shelf images and
+  the Tizen `icon.png` are simple placeholders**, not real app art (the tvOS
+  ones are generated from the same 1024 px icon as the iOS app).
 - **`minSdk = 24`** means the adaptive-icon-only launcher icon (API 26+)
   won't resolve on API 24-25 devices specifically.
 - **`tizen-app/config.xml`'s author/package ID is a placeholder**
@@ -561,6 +617,12 @@ Deliberate simplifications for this proof of concept — not bugs:
 [ ] Android home screen works on a device  - NOT VERIFIED (no device/emulator exercised)
 [ ] iOS target builds successfully         - NOT VERIFIED (no macOS/Xcode available)
 [ ] iOS home screen works                  - NOT VERIFIED
+[x] tvOS framework builds                  - VERIFIED (./gradlew :shared:linkDebugFrameworkTvosSimulatorArm64)
+[x] tvOS app builds, installs, launches    - VERIFIED (scripts/run-tvos-simulator.sh, Apple TV 4K 3rd gen / tvOS 26.5 simulator)
+[x] tvOS home screen renders (25 rows)     - VERIFIED (simulator screenshots; 960x540 dp canvas, same card sizes as Android TV)
+[x] tvOS D-pad Right/Down + Select         - VERIFIED (scripted keyboard input to the simulator; focus moves, overlay opens)
+[ ] tvOS Menu/Back dismisses overlay       - NOT VERIFIED by scripted input (Escape keystroke not delivered as Menu); code path unchanged from Android/Web
+[ ] tvOS on real Apple TV hardware         - NOT VERIFIED
 [x] wasmJs builds successfully             - VERIFIED
 [x] Web app opens in a desktop browser     - VERIFIED (real Chrome)
 [x] 25 rows render correctly               - VERIFIED (real Chrome)

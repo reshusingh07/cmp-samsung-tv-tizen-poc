@@ -12,6 +12,14 @@
 kotlin = "2.4.10"
 # Latest stable Compose Multiplatform (github.com/JetBrains/compose-multiplatform/releases).
 compose-multiplatform = "1.12.0"
+# Compose Material 3 is versioned independently of the rest of Compose
+# Multiplatform (JetBrains ships it from its own alpha line). This is the
+# release built for the 1.12.0 Compose line, and -- what actually pins it --
+# the only material3 version the dev.sajidali tvOS fork publishes tvOS klibs
+# for (see settings.gradle.kts / docs/CMP_TVOS_GUIDE.md). The Gradle plugin's
+# own `compose.material3` accessor is deprecated in 1.12.0 and would resolve a
+# different version, so every Compose dependency is declared explicitly below.
+compose-material3 = "1.12.0-alpha03"
 # Top of the AGP range that Kotlin 2.4.x fully supports (7.6.3-9.5.0 Gradle /
 # 8.5.2-9.1.0 AGP, per kotlinlang.org/docs/gradle-configure-project.html).
 agp = "9.2.1"
@@ -31,3 +39,8 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose-multiplatform" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose-multiplatform" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose-multiplatform" }
+compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
+compose-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "compose-multiplatform" }

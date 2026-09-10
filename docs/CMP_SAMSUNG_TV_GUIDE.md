@@ -116,7 +116,7 @@ compiled Kotlin/Compose UI, running frame by frame, drawing onto an HTML
 |---|---|---|---|
 | `shared/src/commonMain` | Almost the entire app: `App.kt`, `HomeScreen.kt`, `ContentRow.kt`, `ContentCard.kt`, the `HomeViewModel`, `TvFocusState`, `TvKeyHandling.kt`, the `Content`/`ContentSection` models, `DummyContentRepository` | This is the "write once" code CMP is for. Zero UI is duplicated per platform. | Android, iOS, Web — all three call the same `App()` |
 | `shared/src/androidMain` | `PlatformBackHandler.android.kt`, `PlatformInputBridge.android.kt`, `PlatformFocusBridge.android.kt` | Small per-platform pieces (`expect`/`actual` "actuals") for things Android needs that other platforms don't (or vice versa) | Android only |
-| `shared/src/iosMain` | `main.ios.kt` (the Swift-callable entry point), the iOS actuals of the same three platform files | Same idea as above, for iOS | iOS only |
+| `shared/src/appleMain` | `MainViewController.kt` (the Swift-callable entry point), the Apple actuals of the same three platform files | Same idea as above, shared by iOS and tvOS (see `docs/CMP_TVOS_GUIDE.md`) | iOS + tvOS |
 | `shared/src/wasmJsMain` | `main.kt` (the browser entry point), `resources/index.html`, and the wasmJs actuals of the three platform files | The web-specific code: how the app boots in a browser, and the one genuinely Tizen-specific input quirk (Section 7) | Web / Tizen |
 | `tizen-app/` | `config.xml`, `icon.png`, and (after a build) a copy of the compiled web output | The Tizen Web App project itself — see Section 4 | Tizen / Samsung TV only |
 | `tizen-app/config.xml` | Tizen's app manifest (a W3C "widget" format) | Tells Tizen the app's id, name, icon, minimum Tizen version, and settings | Tizen Studio / the TV, at install time |
