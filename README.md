@@ -58,7 +58,8 @@ is the shared UI + input architecture, not the content.
 | Project structure, Gradle config, all source code | ✅ Written and building |
 | Android — builds (`./gradlew :androidApp:assembleDebug`) | ✅ **Verified** — produces `androidApp-debug.apk` |
 | Android — runs on a device/emulator | ⬜ Not verified (no device/emulator exercised) |
-| iOS — builds and runs | ⬜ Not verified (no macOS/Xcode available in development) |
+| iOS — builds (`xcodebuild`, iPhone simulator) | ✅ **Verified** — Xcode 26.5, iOS 26.5 simulator, after the tvOS changes |
+| iOS — runs on a device/simulator | ⬜ Not verified (built, not launched) |
 | tvOS — Kotlin framework builds (`./gradlew :shared:linkDebugFrameworkTvosSimulatorArm64`) | ✅ **Verified** |
 | tvOS — Xcode app builds, installs and launches on an Apple TV simulator (`./scripts/run-tvos-simulator.sh`) | ✅ **Verified** — Apple TV 4K (3rd generation), tvOS 26.5 simulator, Xcode 26.5 |
 | tvOS — Siri Remote D-pad + Select drive the shared focus/selection code | ✅ **Verified** on the simulator with scripted keyboard input (arrows, Return) |
@@ -613,9 +614,9 @@ Deliberate simplifications for this proof of concept — not bugs:
 ## Verification status
 
 ```
-[x] Android builds successfully           - VERIFIED (./gradlew :androidApp:assembleDebug)
+[x] Android builds successfully           - VERIFIED (./gradlew :androidApp:assembleDebug, re-run after the tvOS changes)
 [ ] Android home screen works on a device  - NOT VERIFIED (no device/emulator exercised)
-[ ] iOS target builds successfully         - NOT VERIFIED (no macOS/Xcode available)
+[x] iOS target builds successfully         - VERIFIED (xcodebuild iosApp for the iOS 26.5 simulator, after the tvOS changes)
 [ ] iOS home screen works                  - NOT VERIFIED
 [x] tvOS framework builds                  - VERIFIED (./gradlew :shared:linkDebugFrameworkTvosSimulatorArm64)
 [x] tvOS app builds, installs, launches    - VERIFIED (scripts/run-tvos-simulator.sh, Apple TV 4K 3rd gen / tvOS 26.5 simulator)
@@ -623,7 +624,7 @@ Deliberate simplifications for this proof of concept — not bugs:
 [x] tvOS D-pad Right/Down + Select         - VERIFIED (scripted keyboard input to the simulator; focus moves, overlay opens)
 [ ] tvOS Menu/Back dismisses overlay       - NOT VERIFIED by scripted input (Escape keystroke not delivered as Menu); code path unchanged from Android/Web
 [ ] tvOS on real Apple TV hardware         - NOT VERIFIED
-[x] wasmJs builds successfully             - VERIFIED
+[x] wasmJs builds successfully             - VERIFIED (re-run after the tvOS changes)
 [x] Web app opens in a desktop browser     - VERIFIED (real Chrome)
 [x] 25 rows render correctly               - VERIFIED (real Chrome)
 [x] Horizontal scrolling works             - VERIFIED (real Chrome)

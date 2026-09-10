@@ -391,6 +391,11 @@ Apple TV hardware.
   auto-scrolling to keep it in view, and Select opened the selection overlay
   with the ✓ badge on the card. Interactive D-pad navigation was also
   confirmed by hand.
+- No regressions on the other targets with the settings plugin applied and
+  material3 moved to `1.12.0-alpha03`: `:androidApp:assembleDebug`,
+  `:shared:wasmJsBrowserDistribution` and an `xcodebuild` of `iosApp` for an
+  iOS 26.5 simulator all succeed, and the iOS dependency graph contains no
+  `dev.sajidali` coordinate.
 
 **Not verified**
 
