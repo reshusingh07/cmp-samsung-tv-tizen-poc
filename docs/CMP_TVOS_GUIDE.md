@@ -126,12 +126,16 @@ matter for a TV app:
 | `tvosApp/` (new) | A plain Xcode project mirroring `iosApp/`: SwiftUI `App` → `UIViewControllerRepresentable` → `MainViewController()`, a "Compile Kotlin" run-script phase, `Config.xcconfig`, tvOS `Info.plist`, an asset catalog with App Icon / Top Shelf brand assets, and a shared `tvosApp` scheme | The tvOS app shell. Not a Gradle module, exactly like `iosApp`. |
 | `scripts/run-tvos-simulator.sh` (new) | Boots an Apple TV simulator, runs `xcodebuild` (which runs Gradle), installs and launches the app | One-command build-and-run without opening Xcode; also what the verification in Section 8 used. |
 | `gradlew` | Executable bit set | It was checked in without one, so every `./gradlew` — including the one Xcode runs — failed with "permission denied" on a fresh clone. |
-| `shared/src/commonMain` | Doc comments only | No shared UI or input code changed for tvOS. |
+| `shared/src/commonMain` | Doc comments only, for the tvOS target itself | No shared UI or input code had to change to *reach* tvOS. |
+| `roku-focus-list/` (later) | Vendored copy of the [roku-focus-list](https://github.com/souravnoobcoder/roku-focus-list) library, which now supplies D-pad navigation — see Section 4.1 | Added after tvOS was working, to replace the app's hand-rolled focus state with Roku-style fixed focus. |
 
-The last row is the headline: **no `commonMain` Kotlin changed.** The whole
-remote-navigation design (`TvFocusState`, `HomeViewModel.move()`,
-`TvKeyHandling.kt`) was written against Compose's common `Key`/`KeyEvent`
-API, and the fork delivers Siri Remote presses through exactly that API.
+The headline for the tvOS port itself: **no `commonMain` Kotlin had to
+change.** The remote-navigation design in place at the time (`TvFocusState`,
+`HomeViewModel.move()`, `TvKeyHandling.kt`) was written against Compose's
+common `Key`/`KeyEvent` API, and the fork delivers Siri Remote presses through
+exactly that API. That focus layer was subsequently replaced by
+`roku-focus-list` (Section 4.1) for reasons of TV *feel*, not tvOS
+compatibility.
 
 ---
 
@@ -224,11 +228,28 @@ change:
   contract the Android `BackHandler` follows, which is why the shared code
   needed no tvOS branch.
 
-The root `Modifier.focusable()` + `Modifier.onKeyEvent` in `App.kt` is the
-receiver for all of this, exactly as on the other platforms. It gets focus on
-launch because the fork starts the scene in `InputMode.Keyboard`
-(`PlatformFocusBridge.apple.kt` therefore reports "has input focus" as
-always-true, same as iOS).
+### 4.1 Who receives those keys: `roku-focus-list`
+
+The receiver is a single `RokuLazyColumn` from the vendored
+[`:roku-focus-list`](https://github.com/souravnoobcoder/roku-focus-list)
+module, which installs its own `Modifier.onPreviewKeyEvent` and owns row/column
+movement, key-repeat throttling and ENTER/OK. `App.kt` hands it platform focus
+via `columnState.requestFocus()`; there is no root focusable competing with it.
+It can take focus on a cold launch because the fork starts the scene in
+`InputMode.Keyboard` (`PlatformFocusBridge.apple.kt` therefore reports "has
+input focus" as always-true, same as iOS).
+
+The library is vendored rather than resolved from Maven Central because its
+published artifact declares android, desktop and iOS targets only — **no tvOS
+klib** — and the compose-tvos plugin cannot help there: it redirects the
+`org.jetbrains.*` Compose coordinates the library depends on, not the library
+itself. A source copy was the only way to run it on Apple TV. Building it for
+tvOS needed **zero source changes**: only targets, in its `build.gradle.kts`.
+That is a useful data point for the wider question of putting this library on
+Apple TV for real — the blocker is a publish, not the code.
+
+The app itself keeps only one key handler, `Modifier.overlayKeyGate`, which
+previews keys away from the grid while the selection overlay is up.
 
 **In the tvOS Simulator**, with the Simulator window focused, the keyboard
 arrow keys drive the D-pad, Return is Select and Escape is Menu. There is also

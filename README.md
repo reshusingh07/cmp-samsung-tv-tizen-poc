@@ -138,33 +138,42 @@ actually is, why WebAssembly is required, what a `.wgt` file is, and what
 the TV executes at runtime — see
 [`docs/CMP_SAMSUNG_TV_GUIDE.md`, Section 1](docs/CMP_SAMSUNG_TV_GUIDE.md#1-overall-architecture).
 
-### Why not `Modifier.focusable()`?
+### Focus: `roku-focus-list`, not Compose's focus traversal
 
-Compose has a built-in 2D focus-traversal system, and it is deliberately
-**not** used here for the row/column card grid. Two reasons:
+D-pad navigation is handled by
+[`roku-focus-list`](https://github.com/souravnoobcoder/roku-focus-list), a
+Compose Multiplatform library implementing Roku-style **fixed focus**: the
+highlight stays parked at a fixed slot and the *content* scrolls behind it,
+rather than the highlight travelling to each card. That is how Roku, Apple TV
+and most OTT apps navigate, and it is what a 10-foot UI wants — the viewer's eye
+stays in one place.
 
-1. **Uneven grids.** Compose's default focus search picks the "nearest"
-   focusable node geometrically — it has no concept of "row 4, column 7" the
-   way this app's `TvFocusState` does, and doesn't reliably keep a
+It is **vendored** as the `:roku-focus-list` module rather than resolved from
+Maven Central, because the published artifact ships no tvOS klibs. See
+[`roku-focus-list/build.gradle.kts`](roku-focus-list/build.gradle.kts) for the
+full reasoning; `roku-focus-list/src/` is an unmodified copy of upstream v2.1.0.
+
+Compose's own 2D focus traversal (`Modifier.focusable()` +
+`FocusManager.moveFocus`) is deliberately not used for the card grid:
+
+1. **It moves focus *to* the item**, so the row jumps to bring each newly
+   focused card into view instead of sliding under a parked highlight.
+2. **Uneven grids.** Its focus search picks the geometrically nearest focusable
+   node — it has no concept of "row 4, column 7", and does not reliably keep a
    focused-but-scrolled-out-of-view row's item in view.
-2. **Consistency across three different focus implementations.** Android's,
-   iOS's, and the browser's default focus-traversal behaviors are not
-   guaranteed to agree with each other in nested-lazy-list situations.
+3. **Three different implementations.** Android's, iOS/tvOS's and the browser's
+   default traversal are not guaranteed to agree in nested-lazy-list situations.
 
-Instead, `TvFocusState` (`rowIndex`, `columnIndex`) is a plain, explicit,
-framework-free piece of state that `HomeViewModel` moves directly, and every
-`ContentRow`/`ContentCard` just reads whether its own coordinates match it.
-See [TV remote / keyboard navigation](#tv-remote--keyboard-navigation) below
-and [the full guide](docs/CMP_SAMSUNG_TV_GUIDE.md#8-focus-vs-selection) for
-the complete story, including the Web/Wasm-specific focus fix.
+See [TV remote / keyboard navigation](#tv-remote--keyboard-navigation) for how
+the library is wired up.
 
----
 
 ## Project structure
 
 | Source set | What lives here | Used by |
 |---|---|---|
-| `shared/src/commonMain` | Everything: models, dummy-data generator, all UI (`App`, `HomeScreen`, `ContentRow`, `ContentCard`), the view model, focus state, key-event mapping | Android, iOS, tvOS, Web — zero UI duplication |
+| `shared/src/commonMain` | Everything: models, dummy-data generator, all UI (`App`, `HomeScreen`, `ContentCard`), the view model, the selection-overlay key gate | Android, iOS, tvOS, Web — zero UI duplication |
+| `roku-focus-list/` | Vendored copy of the [roku-focus-list](https://github.com/souravnoobcoder/roku-focus-list) library (v2.1.0), supplying the Roku-style fixed-focus D-pad navigation. `src/` is unmodified upstream; only `build.gradle.kts` differs | All targets — that file explains why it is vendored rather than a Maven coordinate |
 | `shared/src/androidMain` | `PlatformBackHandler.android.kt`, `PlatformInputBridge.android.kt`, `PlatformFocusBridge.android.kt` | Android only |
 | `shared/src/appleMain` | `MainViewController.kt` (Swift-callable entry point), Apple actuals of the platform files | iOS **and** tvOS — Kotlin's default hierarchy makes `appleMain` the parent of both `iosMain` and `tvosMain`, and the files are identical for the two |
 | `shared/src/wasmJsMain` | `main.kt` (`ComposeViewport` entry point), `resources/index.html`, wasmJs actuals of the platform files | Web / Tizen |
@@ -308,191 +317,179 @@ directional key presses, and the app must always know exactly one card is
 "current." This section explains the actual implementation and the
 complete flow from a key press to the screen updating.
 
-### Design: explicit state, not Compose's built-in focus system
+### Design: a fixed-focus library, not Compose's focus traversal
 
-Compose ships a built-in 2D focus-traversal system
-(`Modifier.focusable()` + arrow-key-driven `FocusManager` movement), but
-this project **deliberately does not use it** for the card grid. Instead,
-navigation position is a plain, framework-free piece of state:
+Navigation belongs to [`roku-focus-list`](https://github.com/souravnoobcoder/roku-focus-list),
+vendored here as the `:roku-focus-list` module. The screen is one
+`RokuLazyColumn`; it owns the focus position, the key handling and the
+scrolling, and this app supplies only the rows and the cards.
+
+Three behaviours follow, all verified on an Apple TV simulator:
+
+**1. The highlight is parked; the content moves.** Each row declares
+`focusSlot = 1`, so the focused card sits in the second visible slot and the row
+scrolls underneath it. Scroll position is derived from a *window start*
+(`selectedIndex - focusSlot`), not from the selected index:
 
 ```kotlin
-// shared/src/commonMain/kotlin/com/example/dummytvapp/viewmodel/TvFocusState.kt
-data class TvFocusState(
-    val rowIndex: Int = 0,
-    val columnIndex: Int = 0,
-)
-
-enum class TvDirection { Up, Down, Left, Right }
+// roku-focus-list/src/commonMain/kotlin/com/rokufocus/RokuFocusListState.kt
+val windowStart: Int
+    get() = when (focusMode) {
+        RokuFocusMode.Static -> {
+            val ideal = selectedIndex - focusSlot
+            ideal.coerceIn(0, max(0, _itemCount - _visibleCount))
+        }
+        ...
+    }
 ```
 
-`HomeViewModel` moves this state directly in response to key presses, and
-every `ContentCard` simply checks "does my (row, column) match this state?"
-to decide whether to draw itself as focused. Why not the built-in system:
-Compose's default focus search picks the *geometrically nearest* focusable
-node, which has no concept of "row 4, column 7" the way `TvFocusState`
-does, and doesn't reliably keep a focused item's row scrolled into view
-when rows have independent horizontal scroll positions (a `LazyRow` nested
-inside a `LazyColumn`, exactly this app's layout).
+At the end of a row the list can scroll no further, so the highlight walks the
+last few cards instead — the behaviour you would want, falling out of the same
+formula.
+
+**2. Focus is remembered per row.** The library keeps one `RokuColumnState`
+(which row is current) plus one `RokuFocusListState` **per row** (which card is
+current in that row). Leave a row on card 8, come back, and you are still on
+card 8 — where the previous single `TvFocusState(rowIndex, columnIndex)` carried
+one column index across every row.
+
+**3. Held directions are throttled, then accelerated.** A remote's auto-repeat
+fires far faster than a scroll animation settles, and ungated every repeat
+restarts an animation from a half-finished one:
+
+```kotlin
+// roku-focus-list/src/commonMain/kotlin/com/rokufocus/RokuKeyRepeat.kt
+fun isThrottled(now: Long, config: RokuFocusConfig): Boolean {
+    val accelerated = config.keyRepeatAccelAfter > 0 &&
+        consecutivePresses >= config.keyRepeatAccelAfter
+    val delay = if (accelerated) config.keyRepeatFastDelayMs else config.keyRepeatDelayMs
+    return now - lastKeyTime < delay
+}
+```
 
 ### The complete input flow
 
 ```
-Key press (physical keyboard in Chrome, or a real Tizen remote)
+Key press (Siri Remote, Android TV D-pad, Tizen remote, or a keyboard)
         │
-Browser / Tizen web engine turns it into a KeyboardEvent
+Platform turns it into a Compose KeyEvent
+  - tvOS: the Compose fork maps UIPress -> Key.Direction* / DirectionCenter / Back
+  - Android: hardware D-pad key codes
+  - Web/Tizen: browser KeyboardEvent
         │
-Compose Multiplatform's Web/Wasm layer delivers it to whatever
-currently holds real focus
+App.kt's Modifier.overlayKeyGate - swallows keys only while the
+selection overlay is up (TvKeyHandling.kt)
         │
-App.kt's Modifier.onKeyEvent { viewModel.handleKeyEvent(event) }
+RokuLazyColumn's own Modifier.onPreviewKeyEvent (RokuColumnKeyHandler.kt)
         │
-TvKeyHandling.kt maps the Key to an action
+Key-repeat throttle -> row/column move, or onItemClicked on ENTER/OK
         │
-HomeViewModel.move(direction) / .activate() / .back()
+RokuColumnState / the row's RokuFocusListState is updated
         │
-HomeViewModel.focus (a TvFocusState) is reassigned
-        │
-Compose recomposition: HomeScreen → ContentRow → ContentCard re-read `focus`
-        │
-ContentCard draws its animated border; ContentRow/HomeScreen auto-scroll
+snapshotFlow { windowStart } -> animateScrollToItem, and the highlight
+overlay animates to its new slot
         ▼
-User sees the newly-focused card, scrolled into view
+User sees the content scroll under a parked highlight
 ```
 
-Every one of those steps is ordinary `commonMain` Kotlin, so it runs
-identically on Android, iOS, tvOS, and Web/Wasm — nothing above is
-platform-specific. (On tvOS the Compose fork delivers the Siri Remote's
-D-pad as `Key.Direction*`, Select as `Key.DirectionCenter` and Menu as
-`Key.Back`, so the very same `handleKeyEvent` drives it — see
-[`docs/CMP_TVOS_GUIDE.md`, Section 4](docs/CMP_TVOS_GUIDE.md#4-siri-remote-input).)
+Every step above is ordinary `commonMain` Kotlin, so it runs identically on
+Android, iOS, tvOS and Web/Wasm.
 
 ### Step by step, with the actual code
 
-**1. Where key events are captured — `App.kt`.** One `Modifier.focusable()`
-sits on the whole screen (not per-card), with a single `FocusRequester`.
-This is the *only* place Compose's own focus API is used at all:
+**1. Who holds focus — `App.kt`.** There is no root focusable any more: the
+column is the focusable node, handed platform focus once the platform reports
+the app has input focus.
 
 ```kotlin
-HomeScreen(
-    viewModel = viewModel,
-    modifier = Modifier
-        .fillMaxSize()
-        .focusRequester(rootFocusRequester)
-        .focusable()
-        .onKeyEvent { event -> viewModel.handleKeyEvent(event) },
-)
+val columnState = rememberRokuColumnState()
+
+LaunchedEffect(hasInputFocus) {
+    if (!hasInputFocus) return@LaunchedEffect
+    withFrameNanos { }   // let the column attach its FocusRequester
+    runCatching { columnState.requestFocus() }
+}
 ```
 
-**2. Mapping keys to actions — `TvKeyHandling.kt`:**
+**2. The only key handling this app still does — `TvKeyHandling.kt`.** While
+the selection overlay is up, keys are previewed away from the grid so it cannot
+scroll behind a modal:
 
 ```kotlin
-internal fun HomeViewModel.handleKeyEvent(event: KeyEvent): Boolean {
-    if (event.type != KeyEventType.KeyDown) return false
-    return when (event.key) {
-        Key.DirectionLeft -> { move(TvDirection.Left); true }
-        Key.DirectionRight -> { move(TvDirection.Right); true }
-        Key.DirectionUp -> { move(TvDirection.Up); true }
-        Key.DirectionDown -> { move(TvDirection.Down); true }
-        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> { activate(); true }
-        Key.Back, Key.Escape -> back()
-        else -> false
+internal fun Modifier.overlayKeyGate(viewModel: HomeViewModel): Modifier =
+    onPreviewKeyEvent { event ->
+        if (viewModel.selected == null) return@onPreviewKeyEvent false
+        if (event.type == KeyEventType.KeyDown) {
+            when (event.key) {
+                Key.Back, Key.Escape, Key.Enter, Key.NumPadEnter, Key.DirectionCenter ->
+                    viewModel.back()
+                else -> Unit
+            }
+        }
+        true
+    }
+```
+
+With no overlay showing it returns `false` for *every* key, BACK included. That
+is deliberate: an unconsumed BACK is what lets tvOS suspend the app from the
+root screen, as Apple's HIG requires.
+
+**3. Declaring the grid — `HomeScreen.kt`.** Rows are a DSL; the library does
+the rest:
+
+```kotlin
+RokuLazyColumn(
+    state = columnState,
+    config = RokuFocusConfig(
+        highlightAnimationSpec = RokuAnimationSpec.Smooth,
+        keyRepeatDelayMs = 120L,
+        keyRepeatAccelAfter = 3,
+        keyRepeatFastDelayMs = 45L,
+        hapticFeedback = false,              // a TV remote has none
+        focusEscape = RokuFocusEscape.None,  // the grid is the whole screen
+    ),
+    focusHighlight = { isFocused ->
+        DefaultFocusHighlight(isFocused, borderColor = MaterialTheme.colorScheme.primary, ...)
+    },
+    onItemClicked = { rowIndex, itemIndex -> viewModel.select(rowIndex, itemIndex) },
+) {
+    viewModel.sections.forEachIndexed { rowIndex, section ->
+        row(
+            key = section.id,
+            itemWidth = CardWidth,
+            itemHeight = CardHeight,
+            focusSlot = 1,                   // park the highlight one card in
+            header = { isRowFocused -> RowHeader(section.title, isRowFocused) },
+        ) {
+            items(count = section.items.size, key = { section.items[it].id }) { itemIndex, isFocused ->
+                ContentCard(content = section.items[itemIndex], isFocused = isFocused, ...)
+            }
+        }
     }
 }
 ```
 
-`Key.DirectionLeft/Right/Up/Down` and `Key.Enter` correspond to the exact
-same DOM key codes a real Tizen remote's D-pad and OK button send
-(`ArrowLeft=37, ArrowUp=38, ArrowRight=39, ArrowDown=40, Enter=13`, per
-Samsung's Remote Control docs) — which is why pressing physical arrow keys
-in a desktop browser exercises this same code path.
-
-**3. Moving focus, with boundary handling — `HomeViewModel.kt`:**
+**4. What the app still owns — `HomeViewModel.kt`.** Only the selection
+overlay. The navigation position is no longer app state at all:
 
 ```kotlin
-fun move(direction: TvDirection) {
-    if (selected != null) return   // don't drive the grid behind the "selected" overlay
-    focus = when (direction) {
-        TvDirection.Right -> moveColumn(+1)
-        TvDirection.Left -> moveColumn(-1)
-        TvDirection.Down -> moveRow(+1)
-        TvDirection.Up -> moveRow(-1)
-    }
+fun select(rowIndex: Int, columnIndex: Int) {
+    if (selected != null) return
+    selected = sections.getOrNull(rowIndex)?.items?.getOrNull(columnIndex)
 }
 
-private fun moveColumn(delta: Int): TvFocusState {
-    val row = sections[focus.rowIndex]
-    val newColumn = (focus.columnIndex + delta).coerceIn(0, row.items.lastIndex)
-    return focus.copy(columnIndex = newColumn)
-}
-
-private fun moveRow(delta: Int): TvFocusState {
-    val newRow = (focus.rowIndex + delta).coerceIn(0, sections.lastIndex)
-    val clampedColumn = focus.columnIndex.coerceIn(0, sections[newRow].items.lastIndex)
-    return TvFocusState(rowIndex = newRow, columnIndex = clampedColumn)
-}
-
-fun activate() {
-    selected = focusedContent   // ENTER/OK
+fun back(): Boolean {
+    if (selected != null) { selected = null; return true }
+    return false   // nothing to dismiss -> let the platform handle BACK
 }
 ```
 
-`coerceIn(0, ...)` is what makes the boundaries behave correctly:
+**5. Drawing the focus ring — `ContentCard.kt`.** The card draws no focus
+border of its own: the library renders one highlight overlay at the row's focus
+slot, so a per-card border would double it. The card also uses a raw tap gesture
+rather than `Modifier.clickable`, because `clickable` makes a node focusable and
+would put a second focus target inside a row the column already owns.
 
-- **First/last card in a row:** pressing Left on column 0, or Right on the
-  last column, leaves `columnIndex` exactly where it was — no wraparound,
-  no crash.
-- **First/last row:** the same clamp on `rowIndex`.
-- **Moving between rows of different lengths:** `moveRow` re-clamps the
-  *existing* column into the new row's valid range, so moving down from
-  column 9 of a 12-item row into a shorter row lands on that row's last
-  item instead of an out-of-bounds index.
-
-**4. Displaying which card is focused — `HomeScreen.kt` → `ContentRow.kt` →
-`ContentCard.kt`.** Each row is told whether it's the currently-focused row
-(and if so, which column):
-
-```kotlin
-// HomeScreen.kt
-ContentRow(
-    section = section,
-    focusedColumn = if (index == viewModel.focus.rowIndex) viewModel.focus.columnIndex else null,
-    ...
-)
-```
-
-Each card just compares its own index:
-
-```kotlin
-// ContentRow.kt
-ContentCard(
-    content = item,
-    isFocused = focusedColumn == index,
-    ...
-)
-```
-
-```kotlin
-// ContentCard.kt
-val borderWidth by animateDpAsState(if (isFocused) 4.dp else 0.dp)
-...
-.border(width = borderWidth, color = ..., shape = RoundedCornerShape(8.dp))
-```
-
-**5. Keeping focus on screen.** Two separate `LaunchedEffect`s auto-scroll
-the vertical row list and the focused row's own horizontal list whenever
-`focus` changes, so the user never loses sight of the focused card:
-
-```kotlin
-// HomeScreen.kt — vertical
-LaunchedEffect(viewModel.focus.rowIndex) {
-    listState.animateScrollToItem(viewModel.focus.rowIndex)
-}
-
-// ContentRow.kt — horizontal (only the focused row gets a non-null focusedColumn)
-LaunchedEffect(focusedColumn) {
-    if (focusedColumn != null) listState.animateScrollToItem(focusedColumn)
-}
-```
 
 ### The Web/Wasm-specific wrinkle
 
@@ -554,6 +551,7 @@ actual fun InstallPlatformInputBridge(onBack: () -> Unit) {
 | Compose Multiplatform | 1.12.0 |
 | Compose Material 3 | 1.12.0-alpha03 (versioned separately by JetBrains; pinned explicitly — see `gradle/libs.versions.toml`) |
 | `dev.sajidali.compose-tvos` (tvOS support plugin) | 1.4.2 |
+| `roku-focus-list` (D-pad navigation) | 2.1.0, vendored as source (upstream commit `dfd5685`) |
 | Gradle (via `./gradlew`) | 9.4.1 |
 | Android Gradle Plugin | 9.2.1 |
 | Kotlin/Wasm | Beta |
@@ -624,14 +622,19 @@ Deliberate simplifications for this proof of concept — not bugs:
 [x] tvOS D-pad Right/Down + Select         - VERIFIED (scripted keyboard input to the simulator; focus moves, overlay opens)
 [ ] tvOS Menu/Back dismisses overlay       - NOT VERIFIED by scripted input (Escape keystroke not delivered as Menu); code path unchanged from Android/Web
 [ ] tvOS on real Apple TV hardware         - NOT VERIFIED
+[x] Roku-style fixed focus (highlight parked, content scrolls) - VERIFIED (Apple TV simulator screenshots)
+[x] Per-row focus memory                   - VERIFIED (Apple TV simulator: left row 1 on card 4, moved to row 2, returned to card 4)
+[x] Key-repeat throttle + acceleration     - VERIFIED (Apple TV simulator: 9 presses at 60ms tracked cleanly to the row's last card)
+[x] Highlight walks the last cards at a row's end - VERIFIED (Apple TV simulator)
+[x] roku-focus-list's own unit tests       - VERIFIED (:roku-focus-list:allTests, including the tvosSimulatorArm64 target)
 [x] wasmJs builds successfully             - VERIFIED (re-run after the tvOS changes)
 [x] Web app opens in a desktop browser     - VERIFIED (real Chrome)
 [x] 25 rows render correctly               - VERIFIED (real Chrome)
 [x] Horizontal scrolling works             - VERIFIED (real Chrome)
 [x] Vertical scrolling works               - VERIFIED (real Chrome)
-[x] Focus navigation works (Left/Right/Up/Down + boundaries) - VERIFIED (real Chrome)
-[x] ENTER selection works                  - VERIFIED (real Chrome)
-[x] BACK behavior is handled               - VERIFIED (real Chrome; Tizen back-keycode path NOT verified on a real remote)
+[ ] Focus navigation in a desktop browser  - NEEDS RE-VERIFYING (was verified in real Chrome against the previous hand-rolled focus code; the grid is now roku-focus-list)
+[ ] ENTER selection in a desktop browser   - NEEDS RE-VERIFYING (same reason)
+[ ] BACK behavior in a desktop browser     - NEEDS RE-VERIFYING (same reason; the Tizen back-keycode path is still NOT verified on a real remote)
 [ ] Tizen project packages correctly       - NOT VERIFIED (no Tizen Studio available)
 [ ] Tizen app launches successfully        - NOT VERIFIED (no Tizen device/emulator available)
 [x] Samsung TV compatibility explicitly identified as unverified, with reasoning:

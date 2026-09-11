@@ -83,6 +83,8 @@ kotlin {
             api(libs.compose.material3)
             api(libs.compose.ui)
             api(libs.compose.components.resources)
+            // Roku-style fixed-focus D-pad navigation (vendored; see :roku-focus-list).
+            api(project(":roku-focus-list"))
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)

@@ -1,43 +1,44 @@
 package com.example.dummytvapp.ui
 
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import com.example.dummytvapp.viewmodel.HomeViewModel
-import com.example.dummytvapp.viewmodel.TvDirection
 
 /**
- * Maps a Compose [KeyEvent] to an action on [HomeViewModel].
+ * Swallows D-pad input while the selection overlay is up, and dismisses the
+ * overlay on BACK/OK.
  *
- * `androidx.compose.ui.input.key.Key`/`KeyEvent`/`onKeyEvent` are common
- * Compose Multiplatform UI APIs -- they are implemented on Android (hardware
- * D-pad / keyboard), iOS (hardware keyboard), tvOS (the Siri Remote: the
- * Compose tvOS fork maps its D-pad to `Key.Direction*`, Select to
- * `Key.DirectionCenter` and Menu to `Key.Back` -- see
- * docs/CMP_TVOS_GUIDE.md), and Web/Wasm (browser `KeyboardEvent`s). That is
- * what lets this single function drive every platform's arrow-key/Enter/Back
- * handling with zero platform-specific code -- see README -> "Why not
- * Modifier.focusable()?" for what still does need a platform split
- * (auto-scrolling + the Tizen-specific Back keycode).
+ * This is the only key handling the app itself does. Everything else -- D-pad
+ * movement between rows and cards, key-repeat throttling, ENTER/OK -- belongs to
+ * `RokuLazyColumn`, which installs its own `onPreviewKeyEvent` (see
+ * `RokuColumnKeyHandler`).
  *
- * On tvOS the `false` returned by `back()` when nothing is selected matters:
- * the fork treats an unconsumed Menu press as "let the system handle it", so
- * Menu on the root screen sends the app to the Apple TV Home screen, exactly
- * as Apple's HIG expects.
+ * It must be `onPreviewKeyEvent` on an ancestor of the column: preview handlers
+ * run root-downwards, so returning `true` here stops the event before the
+ * column's own handler ever sees it. That is what keeps the grid from scrolling
+ * behind a modal overlay -- the same guard the old `HomeViewModel.move()` did
+ * with `if (selected != null) return`, moved to where the keys now arrive.
  *
- * @return `true` if the event was handled (so the caller should consume it).
+ * When no overlay is showing this returns `false` for *every* key, including
+ * BACK. That is deliberate: an unconsumed BACK is what lets tvOS suspend the app
+ * from the root screen (see [HomeViewModel.back]).
  */
-internal fun HomeViewModel.handleKeyEvent(event: KeyEvent): Boolean {
-    if (event.type != KeyEventType.KeyDown) return false
-    return when (event.key) {
-        Key.DirectionLeft -> { move(TvDirection.Left); true }
-        Key.DirectionRight -> { move(TvDirection.Right); true }
-        Key.DirectionUp -> { move(TvDirection.Up); true }
-        Key.DirectionDown -> { move(TvDirection.Down); true }
-        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> { activate(); true }
-        Key.Back, Key.Escape -> back()
-        else -> false
+internal fun Modifier.overlayKeyGate(viewModel: HomeViewModel): Modifier =
+    onPreviewKeyEvent { event ->
+        if (viewModel.selected == null) return@onPreviewKeyEvent false
+
+        if (event.type == KeyEventType.KeyDown) {
+            when (event.key) {
+                Key.Back, Key.Escape, Key.Enter, Key.NumPadEnter, Key.DirectionCenter ->
+                    viewModel.back()
+
+                else -> Unit
+            }
+        }
+        // Consume everything else too, so the grid underneath stays put.
+        true
     }
-}

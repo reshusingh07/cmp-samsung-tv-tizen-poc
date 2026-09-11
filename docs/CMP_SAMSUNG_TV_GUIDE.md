@@ -22,7 +22,7 @@ actual Samsung TV), this document says so explicitly instead of guessing.
 **What CMP is doing.** Compose Multiplatform (CMP) is a UI framework that
 lets you write one Kotlin UI (using `@Composable` functions) and run it on
 several platforms — Android, iOS, desktop, and web — without rewriting the
-UI per platform. In this project, `App()`, `HomeScreen()`, `ContentRow()`,
+UI per platform. In this project, `App()`, `HomeScreen()`, `ContentCard()`,
 and `ContentCard()` are written **once**, in `shared/src/commonMain`, and
 every platform calls the exact same `App()` function.
 
@@ -77,7 +77,7 @@ tied to a Samsung developer account (Section 5 explains this step by step).
 
 ```
 Kotlin source code (shared/src/commonMain)
-        │  written once: App(), HomeScreen(), ContentRow(), ContentCard(), ...
+        │  written once: App(), HomeScreen(), ContentCard(), ...
         ▼
 Compose Multiplatform compiler
         │  compiles the SAME commonMain code differently per target
@@ -114,7 +114,7 @@ compiled Kotlin/Compose UI, running frame by frame, drawing onto an HTML
 
 | Path | What's in it | Why it exists | Used by |
 |---|---|---|---|
-| `shared/src/commonMain` | Almost the entire app: `App.kt`, `HomeScreen.kt`, `ContentRow.kt`, `ContentCard.kt`, the `HomeViewModel`, `TvFocusState`, `TvKeyHandling.kt`, the `Content`/`ContentSection` models, `DummyContentRepository` | This is the "write once" code CMP is for. Zero UI is duplicated per platform. | Android, iOS, Web — all three call the same `App()` |
+| `shared/src/commonMain` | Almost the entire app: `App.kt`, `HomeScreen.kt`, `ContentCard.kt`, the `HomeViewModel`, `TvKeyHandling.kt`, the `Content`/`ContentSection` models, `DummyContentRepository` | This is the "write once" code CMP is for. Zero UI is duplicated per platform. D-pad navigation itself comes from the vendored `:roku-focus-list` module. | Android, iOS, tvOS, Web — all call the same `App()` |
 | `shared/src/androidMain` | `PlatformBackHandler.android.kt`, `PlatformInputBridge.android.kt`, `PlatformFocusBridge.android.kt` | Small per-platform pieces (`expect`/`actual` "actuals") for things Android needs that other platforms don't (or vice versa) | Android only |
 | `shared/src/appleMain` | `MainViewController.kt` (the Swift-callable entry point), the Apple actuals of the same three platform files | Same idea as above, shared by iOS and tvOS (see `docs/CMP_TVOS_GUIDE.md`) | iOS + tvOS |
 | `shared/src/wasmJsMain` | `main.kt` (the browser entry point), `resources/index.html`, and the wasmJs actuals of the three platform files | The web-specific code: how the app boots in a browser, and the one genuinely Tizen-specific input quirk (Section 7) | Web / Tizen |
@@ -364,194 +364,79 @@ write-up.
 
 ## 7. Keyboard / TV remote navigation
 
-**Why keyboard navigation is needed.** A Samsung TV remote has no mouse
-pointer and no touch screen — only directional (D-pad) buttons and an
-OK/Enter button. Every interactive element on screen must be reachable by
-pressing Left/Right/Up/Down and confirmed with Enter.
+A Samsung TV remote has no pointer and no touch screen — only a D-pad and an
+OK/Enter button — so every card must be reachable by directional presses alone.
 
-**Why mouse/touch navigation is different.** A mouse or touch interaction
-tells you exactly *which* element the user is interacting with (via
-coordinates). Remote/keyboard navigation instead has to track *one current
-position* ("focus") and move it explicitly in response to a direction —
-there's no coordinate to hit-test against.
+### 7.1 How a remote press becomes a Compose key event
 
-**How Chrome keyboard input simulates the TV remote during development.**
-Per Samsung's Remote Control developer docs, the TV remote's arrow keys and
-Enter button are delivered to a Tizen Web App as ordinary browser
-`KeyboardEvent`s, with the exact same DOM `keyCode` values a PC keyboard's
-arrow keys and Enter key produce (`ArrowLeft=37, ArrowUp=38, ArrowRight=39,
-ArrowDown=40, Enter=13`). That means pressing the physical arrow keys on a
-PC keyboard in Chrome, while developing, exercises the **exact same** code
-path a real remote press would — no special "TV remote emulator" is needed
-for those five keys. (The one Tizen remote key that is *not* a standard PC
-keyboard key — the remote's Back button, DOM keycode `10009` — is handled
-separately; see below.)
+Tizen's web runtime delivers remote presses as ordinary DOM `KeyboardEvent`s,
+with exactly the `keyCode` values a PC keyboard's arrow keys and Enter produce
+(`ArrowLeft=37, ArrowUp=38, ArrowRight=39, ArrowDown=40, Enter=13`). Compose
+Multiplatform's web target translates those into
+`androidx.compose.ui.input.key.Key.DirectionLeft` and friends.
 
-### The actual code
+That is why pressing the arrow keys on a PC keyboard in Chrome exercises the
+same code path a real remote does, and why this app needs no Tizen-specific
+navigation code. The one exception is the remote's **Back** button, DOM keycode
+`10009`, which no desktop browser produces — see Section 7.4.
 
-All of this lives in `shared/src/commonMain`, so it's identical on Android,
-iOS, and Web.
+### 7.2 What handles those key events: `roku-focus-list`
 
-**1. Where key presses are captured — `App.kt`:**
+Navigation is not hand-written in this project. The home screen is a single
+`RokuLazyColumn` from [`roku-focus-list`](https://github.com/souravnoobcoder/roku-focus-list),
+vendored as the `:roku-focus-list` Gradle module (see that module's
+`build.gradle.kts` for why it is a source copy). The library installs its own
+`Modifier.onPreviewKeyEvent` and owns:
+
+- moving between rows (UP/DOWN) and between cards (LEFT/RIGHT),
+- throttling a held direction, then accelerating it,
+- firing `onItemClicked` on ENTER / OK / D-pad centre.
+
+It implements **fixed focus**: the highlight is parked at a fixed slot
+(`focusSlot = 1` here, so the second visible card) and the row scrolls behind
+it, which is how Roku, Apple TV and most OTT apps navigate. Scroll position is
+derived from a window start (`selectedIndex - focusSlot`) rather than from the
+selected index.
+
+It also keeps **one state object per row**, so focus is remembered per row:
+leaving a row on card 8 and coming back lands on card 8 again.
+
+### 7.3 The Web/Wasm-specific wrinkle: the canvas must hold DOM focus
+
+Everything above runs identically on Android, iOS, tvOS and Web — but on
+Web/Wasm there is one extra step before any of it can happen. Compose
+Multiplatform attaches its keyboard listeners to the `<canvas>` element it
+renders into, and that canvas must have real **DOM** focus before a single
+`KeyboardEvent` reaches Compose. Compose's own
+`FocusRequester.requestFocus()` moves only Compose's internal focus, not the
+browser's.
+
+`PlatformFocusBridge.wasmJs.kt` closes that gap: it finds the canvas and focuses
+it on startup, with no click required. `App.kt` then waits for that before
+handing focus to the grid:
 
 ```kotlin
-HomeScreen(
-    viewModel = viewModel,
-    modifier = Modifier
-        .fillMaxSize()
-        .focusRequester(rootFocusRequester)
-        .focusable()
-        .onKeyEvent { event -> viewModel.handleKeyEvent(event) },
-)
-```
+val hasInputFocus by rememberPlatformHasInputFocus()
 
-One `Modifier.focusable()` sits on the whole screen (not per-card — see
-Section 8), and every key event that reaches it is forwarded to
-`viewModel.handleKeyEvent(event)`.
-
-**2. How Arrow Left/Right/Up/Down and Enter/OK are mapped —
-`TvKeyHandling.kt`:**
-
-```kotlin
-internal fun HomeViewModel.handleKeyEvent(event: KeyEvent): Boolean {
-    if (event.type != KeyEventType.KeyDown) return false
-    return when (event.key) {
-        Key.DirectionLeft -> { move(TvDirection.Left); true }
-        Key.DirectionRight -> { move(TvDirection.Right); true }
-        Key.DirectionUp -> { move(TvDirection.Up); true }
-        Key.DirectionDown -> { move(TvDirection.Down); true }
-        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> { activate(); true }
-        Key.Back, Key.Escape -> back()
-        else -> false
-    }
+LaunchedEffect(hasInputFocus) {
+    if (!hasInputFocus) return@LaunchedEffect
+    withFrameNanos { }   // let the column attach its FocusRequester
+    runCatching { columnState.requestFocus() }
 }
 ```
 
-**3. How focus position is tracked — `TvFocusState.kt`:**
+> ⚠️ Verified in desktop Chrome only. Whether Tizen's embedded web runtime
+> builds the same DOM shape has **not** been verified on a real device or the
+> emulator.
+
+### 7.4 The one genuinely Tizen-specific piece: keycode 10009
+
+The remote's Back/Return button sends DOM keycode `10009`, which is
+Tizen-proprietary. Rather than rely on Compose's DOM-keycode mapping table
+knowing about it, the wasmJs actual listens for it directly:
 
 ```kotlin
-data class TvFocusState(
-    val rowIndex: Int = 0,
-    val columnIndex: Int = 0,
-)
-
-enum class TvDirection { Up, Down, Left, Right }
-```
-
-This is a plain Kotlin data class — not a Compose focus API. `rowIndex` is
-which horizontal row is active, `columnIndex` is which card within that row.
-
-**4. How movement (and boundaries) work — `HomeViewModel.kt`:**
-
-```kotlin
-fun move(direction: TvDirection) {
-    if (selected != null) return
-    focus = when (direction) {
-        TvDirection.Right -> moveColumn(+1)
-        TvDirection.Left -> moveColumn(-1)
-        TvDirection.Down -> moveRow(+1)
-        TvDirection.Up -> moveRow(-1)
-    }
-}
-
-private fun moveColumn(delta: Int): TvFocusState {
-    val row = sections[focus.rowIndex]
-    val newColumn = (focus.columnIndex + delta).coerceIn(0, row.items.lastIndex)
-    return focus.copy(columnIndex = newColumn)
-}
-
-private fun moveRow(delta: Int): TvFocusState {
-    val newRow = (focus.rowIndex + delta).coerceIn(0, sections.lastIndex)
-    val clampedColumn = focus.columnIndex.coerceIn(0, sections[newRow].items.lastIndex)
-    return TvFocusState(rowIndex = newRow, columnIndex = clampedColumn)
-}
-```
-
-- **First/last card in a row:** `coerceIn(0, row.items.lastIndex)` simply
-  refuses to move past 0 or the last index — pressing Left on the first
-  card, or Right on the last card, leaves focus exactly where it was.
-- **First/last row:** the same `coerceIn` pattern on `sections.lastIndex`.
-- **Moving between rows preserves column when possible:** `moveRow` clamps
-  the *existing* column into the new row's valid range, so moving down from
-  column 5 of a 12-item row into a shorter row lands on that row's last
-  item instead of crashing or resetting to column 0.
-- **While the selection overlay is showing** (`selected != null`), `move()`
-  does nothing at all — exactly like a real TV UI not letting you drive the
-  grid behind a modal.
-
-**5. Enter/OK — same file:**
-
-```kotlin
-fun activate() {
-    selected = focusedContent
-}
-```
-
-**6. How the currently focused card is displayed — `ContentRow.kt` and
-`ContentCard.kt`:**
-
-`HomeScreen.kt` passes each row whether it currently holds focus:
-
-```kotlin
-ContentRow(
-    section = section,
-    focusedColumn = if (index == viewModel.focus.rowIndex) viewModel.focus.columnIndex else null,
-    ...
-)
-```
-
-Inside `ContentRow`, each card just checks if its own index matches:
-
-```kotlin
-ContentCard(
-    content = item,
-    isFocused = focusedColumn == index,
-    ...
-)
-```
-
-`ContentCard` renders `isFocused` as an animated border:
-
-```kotlin
-val borderWidth by animateDpAsState(if (isFocused) 4.dp else 0.dp)
-...
-.border(
-    width = borderWidth,
-    color = if (isSelected) MaterialTheme.colorScheme.tertiary
-            else MaterialTheme.colorScheme.primary,
-    shape = RoundedCornerShape(8.dp),
-)
-```
-
-**7. Keeping the focused card/row scrolled into view** — two separate
-`LaunchedEffect`s auto-scroll the vertical list (`HomeScreen.kt`) and the
-focused row's horizontal list (`ContentRow.kt`) whenever focus moves:
-
-```kotlin
-// HomeScreen.kt — vertical
-LaunchedEffect(viewModel.focus.rowIndex) {
-    listState.animateScrollToItem(viewModel.focus.rowIndex)
-}
-
-// ContentRow.kt — horizontal, only runs for the currently-focused row
-// (every other row receives focusedColumn = null)
-LaunchedEffect(focusedColumn) {
-    if (focusedColumn != null) {
-        listState.animateScrollToItem(focusedColumn)
-    }
-}
-```
-
-**8. Samsung remote input mapping.** Per Samsung's Remote Control developer
-docs, the remote's directional pad and OK button arrive as the exact same
-`Key.DirectionLeft/Right/Up/Down` / `Key.Enter` values shown above — no
-Tizen-specific code is needed for those. The one exception is the remote's
-**Back** button, which Tizen sends as DOM keycode `10009` — a
-Samsung-proprietary code no desktop browser produces. Since it was unclear
-whether Compose's built-in key-code translation would recognize it,
-`PlatformInputBridge.wasmJs.kt` listens for it directly:
-
-```kotlin
+// shared/src/wasmJsMain/kotlin/.../platform/PlatformInputBridge.wasmJs.kt
 private const val TIZEN_REMOTE_BACK_KEYCODE = 10009
 
 @Composable
@@ -569,101 +454,62 @@ actual fun InstallPlatformInputBridge(onBack: () -> Unit) {
 }
 ```
 
-> ⚠️ **Not verified on a real Tizen device.** This is the standard,
-> documented keycode from Samsung's own docs, wired up defensively — but it
-> has only ever been exercised by manually constructing that keycode in a
-> test script, never by an actual TV remote.
-
-**Getting keyboard input working at all in a browser turned out to be the
-hardest part** — see `PlatformFocusBridge.wasmJs.kt` and Section 12
-("Keyboard doesn't work") for the full story of why, and how it was solved.
+> ⚠️ This keycode is documented by Samsung, but has only been exercised by
+> simulating the keycode in a test script — **not** verified against a real
+> Tizen remote.
 
 ---
 
 ## 8. Focus vs. selection
 
-This distinction trips up a lot of people building TV UIs, so it's worth
-being precise. This project uses **five** different things that all sound
-like "focus," and only two of them are related to each other:
+Two different ideas share the word "focus" in this project, and keeping them
+apart explains most of the code:
 
-| Term | What it means here | Where it lives |
+| Concept | Owned by | Meaning |
 |---|---|---|
-| **App-level "focus" (`TvFocusState`)** | Which row/column is logically "current" for TV navigation purposes | `HomeViewModel.focus`, a plain `TvFocusState(rowIndex, columnIndex)` data class — **not** a Compose API at all |
-| **Selected card (`HomeViewModel.selected`)** | The card the user pressed Enter/OK on (or clicked). Shows the full-screen "Selected" overlay. | `HomeViewModel.selected: Content?` |
-| **Clicked card** | A mouse/touch click on a specific `ContentCard`, which immediately moves focus there *and* selects it in one step | `ContentCard`'s `onClick`, wired to `HomeViewModel.selectAt(rowIndex, columnIndex)` |
-| **DOM focus** | The browser's own concept of "which HTML element currently receives keyboard events" (`document.activeElement`, or — as this project discovered — `shadowRoot.activeElement`) | Web/Wasm only; see `PlatformFocusBridge.wasmJs.kt` |
-| **Compose focus (`FocusRequester`)** | Compose's own internal focus-tree API | Exactly **one** `FocusRequester`, on the whole-screen root in `App.kt` — never on individual cards |
+| **Platform focus** | Compose / the browser / UIKit | Which node receives key events at all. Exactly one node has it: the `RokuLazyColumn`. |
+| **Navigation position** | `roku-focus-list` (`RokuColumnState` + one `RokuFocusListState` per row) | Which row is current, and which card is current within each row. This is what draws the highlight. |
+| **Selection** | This app (`HomeViewModel.selected`) | Which card the user pressed OK on. Drives the overlay and the ✓ badge. |
 
-**Which one this project uses for navigation, and why:** almost entirely
-the first one, `TvFocusState`. The project's own `TvFocusState.kt` doc
-comment explains the reasoning directly:
+The app owns only the third one. Navigation position used to be app state too —
+a `TvFocusState(rowIndex, columnIndex)` moved by `HomeViewModel.move()` — and
+that is what the library replaced.
 
-> "We do NOT rely on Compose's built-in 2D focus traversal
-> (`Modifier.focusable()` + `FocusManager.moveFocus(...)`) to move between a
-> `LazyColumn` of independently-scrolling `LazyRow`s, because Compose's
-> default focus search has no concept of 'the grid of rows has different
-> lengths per row' [...] Instead, `rowIndex`/`columnIndex` are moved
-> explicitly by `HomeViewModel`, and each card simply reads whether its own
-> (row, column) matches this state."
-
-So: **`TvFocusState` decides which card is visually "focused"** (the
-animated border). **Compose's real `FocusRequester` API is used exactly
-once**, on the root of the whole screen — its only job is to make sure
-*something* holds real keyboard focus so key events arrive in the app at
-all. **DOM focus** is a separate, lower-level, Web/Wasm-only concern: even
-with Compose's root `FocusRequester` successfully claimed, the browser
-still won't deliver real keyboard events unless the actual `<canvas>`
-element Compose draws to also has genuine browser focus (see Section 12).
-**Selection** (`HomeViewModel.selected`) is unrelated to any of the above —
-it's just "which card did the user confirm," shown as an overlay.
+The distinction matters at the boundary between them: `HomeViewModel.back()`
+returns `true` only when it actually dismissed an overlay. A `false` means "I
+had nothing to dismiss", which lets the platform handle BACK — on Tizen that is
+the remote's Return button behaving normally, and on tvOS it is what allows the
+system to suspend the app.
 
 ---
 
 ## 9. Input flow
 
-**On a real Samsung TV (not personally verified end-to-end):**
-
 ```
-Samsung Remote (D-pad / OK / Back)
+Remote / keyboard press
         │
-Tizen's web engine turns the button press into a KeyboardEvent
+Tizen web runtime -> DOM KeyboardEvent (arrows 37-40, Enter 13, Back 10009)
         │
-Compose Multiplatform's Web/Wasm keyboard handling
-        │  (attached to the <canvas> Compose renders into)
-        ▼
-App.kt's onKeyEvent → HomeViewModel.handleKeyEvent(event)
+Compose Multiplatform web layer -> androidx.compose.ui.input.key.KeyEvent
         │
-Navigation logic: HomeViewModel.move(direction) / activate() / back()
+App.kt: Modifier.overlayKeyGate(viewModel)
+   └─ overlay showing? swallow the key (and dismiss on BACK/OK)
+   └─ otherwise fall through
         │
-Focused row/card updates: HomeViewModel.focus (TvFocusState)
+RokuLazyColumn's onPreviewKeyEvent (RokuColumnKeyHandler.kt)
+   ├─ UP/DOWN  -> change row       (throttled, then accelerated)
+   ├─ LEFT/RIGHT -> change card    (throttled, then accelerated)
+   └─ ENTER/OK -> onItemClicked(rowIndex, itemIndex)
         │
-Compose recomposition: ContentRow/ContentCard re-read `focus`
-        ▼
-Visual focus indicator: the animated border in ContentCard
+        ├─ navigation: window start recomputed -> animateScrollToItem,
+        │              highlight overlay animates to its slot
+        │
+        └─ selection: HomeViewModel.select(rowIndex, itemIndex)
+                      -> `selected` set -> overlay composes
 ```
-
-**The equivalent Chrome development flow (this is what has actually been
-tested):**
-
-```
-Physical PC keyboard, Arrow key or Enter pressed
-        │
-Chrome generates a real, OS-level KeyboardEvent
-        │
-The event reaches the <canvas> Compose Multiplatform created
-        │  (only if that canvas has real browser focus — see Section 12)
-        ▼
-Same code as above: App.kt → HomeViewModel.handleKeyEvent → move()/activate()
-        │
-Focused card updates, UI recomposes, border animates
-```
-
-The two flows are identical from `App.kt`'s `onKeyEvent` downward — the
-only thing that differs between "real TV remote" and "PC keyboard in
-Chrome" is what generates the `KeyboardEvent` in the first place, which is
-entirely outside this app's code.
 
 ---
+
 
 ## 10. Mouse/click input
 
@@ -673,47 +519,34 @@ Mouse click or touch tap on a card
 Browser/Compose pointer event (Compose Multiplatform's own pointerdown/
 pointerup handling, attached to the <canvas>)
         │
-ContentCard's Modifier.clickable(onClick = onClick)
-        │
-ContentRow's onCardClick(columnIndex) callback
+ContentCard's Modifier.pointerInput { detectTapGestures { onClick() } }
         ▼
-HomeViewModel.selectAt(rowIndex, columnIndex)
+HomeViewModel.select(rowIndex, itemIndex)
 ```
 
-`ContentCard.kt`:
+`ContentCard.kt` uses a raw tap gesture rather than `Modifier.clickable`:
 
 ```kotlin
-.clickable(onClick = onClick)
+.pointerInput(onClick) { detectTapGestures { onClick() } }
 ```
 
-`HomeViewModel.kt`:
+That is deliberate. `Modifier.clickable` makes its node **focusable**, which
+would place a second focus target inside a row that `RokuLazyColumn` already
+owns focus for, and the two would compete for D-pad input. `detectTapGestures`
+handles pointers without touching focus at all.
 
-```kotlin
-/**
- * Touch/mouse equivalent of "move focus here, then press ENTER" in one
- * step.
- */
-fun selectAt(rowIndex: Int, columnIndex: Int) {
-    if (selected != null) return
-    focus = TvFocusState(rowIndex, columnIndex)
-    activate()
-}
-```
+Clicking a card therefore selects it directly, without moving the D-pad
+highlight — a mouse user does not need the highlight to travel there first.
 
-Clicking a card does two things at once that a remote needs two separate
-button presses for: it moves logical focus to that card **and** selects it,
-in a single call.
-
-**Special handling required for Web/Wasm:** clicking a card itself needed
-**no special code at all** — Compose Multiplatform's `clickable()` modifier
-works the same way on Web/Wasm as on Android/iOS, and this was confirmed
-directly during development (a real click was always able to select a
-card). The thing that *did* need special, Web/Wasm-only handling was
-completely different and easy to conflate with clicking: making
+**Special handling required for Web/Wasm:** clicking a card needed **no**
+special code — Compose Multiplatform's pointer handling works the same on
+Web/Wasm as on Android/iOS, confirmed directly during development. The thing
+that *did* need Web/Wasm-only handling is easy to conflate with it: making
 **keyboard** input work *without* first requiring a click. That is
-`PlatformFocusBridge.wasmJs.kt`, covered in Section 7 and Section 12.
+`PlatformFocusBridge.wasmJs.kt`, covered in Section 7.3 and Section 12.
 
 ---
+
 
 ## 11. How another developer can do this for their own CMP project
 
@@ -775,9 +608,11 @@ device.
 actual deployment step — the point where you find out if everything above
 worked.
 
-**Step 12 — Implement remote navigation.** Build your own equivalent of
-`TvFocusState` + `HomeViewModel.move()`/`activate()` + a single root
-`onKeyEvent`/`FocusRequester`, following Section 7 and Section 8. *Why:*
+**Step 12 — Implement remote navigation.** Easiest path: use a fixed-focus
+library. This project uses [roku-focus-list](https://github.com/souravnoobcoder/roku-focus-list),
+vendored as `:roku-focus-list` because its published artifact has no tvOS
+klibs — one `RokuLazyColumn` replaces the whole hand-rolled focus-state layer
+this guide used to describe. Follow Section 7 and Section 8. *Why:*
 without this, your app might *display* correctly on a TV but be completely
 unusable with a remote control — which, for a TV app, defeats the purpose.
 **And apply the fix in `PlatformFocusBridge.wasmJs.kt`** (or your own
@@ -856,7 +691,7 @@ not a generic list.
 ```
 Developer writes Kotlin
         ↓
-Compose Multiplatform (App(), HomeScreen(), ContentRow(), ContentCard())
+Compose Multiplatform (App(), HomeScreen(), ContentCard())
         ↓
 commonMain
         ↓

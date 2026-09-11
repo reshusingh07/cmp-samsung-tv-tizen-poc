@@ -46,6 +46,10 @@ rootProject.name = "DummyTvApp"
 include(":shared")
 include(":androidApp")
 
+// Vendored Roku-style fixed-focus navigation library; see roku-focus-list/build.gradle.kts
+// for why it is a source copy rather than a Maven coordinate.
+include(":roku-focus-list")
+
 // NOTE: there is no separate ":webApp" Gradle module. The `shared` module's
 // own wasmJs target (see shared/build.gradle.kts) is configured with
 // `binaries.executable()`, so it directly produces the runnable browser
